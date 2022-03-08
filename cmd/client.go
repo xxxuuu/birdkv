@@ -13,7 +13,6 @@ func main() {
 	var servers []net.ClientEnd
 	for i := range args {
 		servers = append(servers, net.MakeNetClientEnd(args[i]))
-		fmt.Println(args[i])
 	}
 
 	client := kvraft.MakeClerk(servers)
