@@ -73,3 +73,6 @@ func (ps *LabPersister) SnapshotSize() int {
 	defer ps.mu.Unlock()
 	return len(ps.snapshot)
 }
+
+func (ps *LabPersister) Close() {
+}

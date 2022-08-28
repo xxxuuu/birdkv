@@ -3,3 +3,4 @@
 *.log
 birdkv-cli
 birdkv-server
+birdkv-persist*

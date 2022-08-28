@@ -22,7 +22,7 @@ func main() {
 
 	// 默认触发快照大小为 512M 后期改成可配置
 	maxsaftstate := 1024 * 1024 * 512
-	server := kvraft.StartKVServer(servers, me, persist.MakeFilePersister(), maxsaftstate)
+	server := kvraft.StartKVServer(servers, me, persist.MakeFilePersister(me), maxsaftstate)
 	rpc.Register(server)
 	rpc.Register(server.Rf)
 	rpc.HandleHTTP()

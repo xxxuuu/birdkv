@@ -15,4 +15,6 @@ type Persister interface {
 	ReadSnapshot() []byte
 	// SnapshotSize 返回快照大小
 	SnapshotSize() int
+	// 关闭持久化器
+	Close()
 }

@@ -2,27 +2,26 @@ package persist
 
 import (
 	"fmt"
-	"io/ioutil"
-	"os"
+	"github.com/syndtr/goleveldb/leveldb"
+	"github.com/syndtr/goleveldb/leveldb/util"
 )
 
-const PERSIST_STATE_FILENAME = "birdkv-persist-raft.bin"
-const PERSIST_SNAPSHOT_FILENAME = "birdkv-persist-snapshot.bin"
+const (
+	PersistStorage = "birdkv-persist"
+	RaftState      = "raft-state"
+	Snapshot       = "snapshot"
+)
 
 type FilePersister struct {
-	raftStateFile *os.File
-	snapshotFile  *os.File
+	db *leveldb.DB
 }
 
-func MakeFilePersister() *FilePersister {
-	f1, e1 := os.OpenFile(PERSIST_STATE_FILENAME, os.O_CREATE|os.O_RDWR, 0666)
-	f2, e2 := os.OpenFile(PERSIST_SNAPSHOT_FILENAME, os.O_CREATE|os.O_RDWR, 0666)
-	if e1 != nil || e2 != nil {
-		panic(fmt.Sprintf("无法打开持久化文件 %v %v", e1, e2))
+func MakeFilePersister(id int) *FilePersister {
+	db, err := leveldb.OpenFile(fmt.Sprintf("%s-%d", PersistStorage, id), nil)
+	if err != nil {
+		panic(err)
 	}
-	return &FilePersister{
-		f1, f2,
-	}
+	return &FilePersister{db}
 }
 
 func (f *FilePersister) Copy() Persister {
@@ -30,52 +29,97 @@ func (f *FilePersister) Copy() Persister {
 	return f
 }
 
-// 原子写入文件，通过写入到临时文件，再原子重命名实现
-func (f *FilePersister) atomicWriteFile(data []byte, targetFile string) {
-	tmpfile, _ := os.CreateTemp("", "*.tmp")
-	defer tmpfile.Close()
-	tmpfile.Write(data)
-	os.Rename(tmpfile.Name(), targetFile)
+func (f *FilePersister) write(key string, data []byte) error {
+	return f.db.Put([]byte(key), data, nil)
+}
+
+func (f *FilePersister) read(key string) ([]byte, error) {
+	data, err := f.db.Get([]byte(key), nil)
+	if err == leveldb.ErrNotFound {
+		data = []byte{}
+		err = nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+func (f *FilePersister) size(key string) (int64, error) {
+	limit := []byte(key)
+	if limit[len(limit)-1]+1 == 0 {
+		limit = append(limit, 0)
+	} else {
+		limit[len(limit)-1]++
+	}
+	s, err := f.db.SizeOf([]util.Range{{
+		Start: []byte(key),
+		Limit: limit,
+	}})
+	if err != nil {
+		return 0, err
+	}
+	return s.Sum(), nil
 }
 
 func (f *FilePersister) SaveRaftState(state []byte) {
-	f.atomicWriteFile(state, PERSIST_STATE_FILENAME)
+	err := f.write(RaftState, state)
+	if err != nil {
+		panic(err)
+	}
 }
 
 func (f *FilePersister) ReadRaftState() []byte {
-	data, err := ioutil.ReadFile(PERSIST_STATE_FILENAME)
+	data, err := f.read(RaftState)
 	if err != nil {
-		panic(fmt.Sprintf("读取持久化文件错误 %v", err))
+		panic(err)
 	}
 	return data
 }
 
 func (f *FilePersister) RaftStateSize() int {
-	info, err := f.raftStateFile.Stat()
+	size, err := f.size(RaftState)
 	if err != nil {
-		panic(fmt.Sprintf("读取持久化文件错误 %v", err))
+		panic(err)
 	}
-	return int(info.Size())
+	return int(size)
 }
 
 func (f *FilePersister) SaveStateAndSnapshot(state []byte, snapshot []byte) {
-	// TODO 多个文件如何原子化？
-	f.atomicWriteFile(state, PERSIST_STATE_FILENAME)
-	f.atomicWriteFile(snapshot, PERSIST_SNAPSHOT_FILENAME)
+	tx, err := f.db.OpenTransaction()
+	if err != nil {
+		panic(err)
+	}
+	err = tx.Put([]byte(RaftState), state, nil)
+	if err != nil {
+		panic(err)
+	}
+	err = tx.Put([]byte(Snapshot), snapshot, nil)
+	if err != nil {
+		panic(err)
+	}
+	err = tx.Commit()
+	if err != nil {
+		panic(err)
+	}
 }
 
 func (f *FilePersister) ReadSnapshot() []byte {
-	data, err := ioutil.ReadFile(PERSIST_SNAPSHOT_FILENAME)
+	data, err := f.read(Snapshot)
 	if err != nil {
-		panic(fmt.Sprintf("读取持久化文件错误 %v", err))
+		panic(err)
 	}
 	return data
 }
 
-func (f FilePersister) SnapshotSize() int {
-	info, err := f.snapshotFile.Stat()
+func (f *FilePersister) SnapshotSize() int {
+	size, err := f.size(Snapshot)
 	if err != nil {
-		panic(fmt.Sprintf("读取持久化文件错误 %v", err))
+		panic(err)
 	}
-	return int(info.Size())
+	return int(size)
+}
+
+func (f *FilePersister) Close() {
+	_ = f.db.Close()
 }
